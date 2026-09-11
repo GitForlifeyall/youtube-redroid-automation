@@ -423,34 +423,54 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
     log("[*] Waiting for video render & upload transition...")
     time.sleep(5)
     
-    # Step 5: Handle Metadata Screen (if present)
+    # Step 5: Handle Metadata Screen
+    log("[*] Navigating metadata screen...")
+    nodes = dump_ui_nodes(adb_exe, target)
+    title_box = (
+        find_node(nodes, res_id="title_edit_text")
+        or find_node(nodes, text="Caption your Short")
+        or find_node(nodes, res_id="caption_input")
+    )
+    if not title_box:
+        edit_texts = [n for n in nodes if n.get("class") == "android.widget.EditText"]
+        if edit_texts:
+            title_box = edit_texts[0]
+            
+    if title_box and title_box["cx"]:
+        log(f"[*] Entering Short title: '{title}'...")
+        run_adb(adb_exe, target, "shell", "input", "tap", str(title_box["cx"]), str(title_box["cy"]))
+        time.sleep(2)
+        # Type words with keyevent 62 (spacebar) for proper spaces
+        words = title.split(" ")
+        for i, word in enumerate(words):
+            if word:
+                # Escape special shell characters if any
+                safe_word = re.sub(r'([&|;$><`"\'\\])', r'\\\1', word)
+                run_adb(adb_exe, target, "shell", "input", "text", safe_word)
+            if i < len(words) - 1:
+                run_adb(adb_exe, target, "shell", "input", "keyevent", "62")
+        time.sleep(2)
+        # Close soft keyboard so screen returns to full height
+        run_adb(adb_exe, target, "shell", "input", "keyevent", "111")
+        time.sleep(2)
+    
+    # Re-dump nodes to get fresh, exact coordinates of Upload Short button
     nodes = dump_ui_nodes(adb_exe, target)
     upload_btn = (
-        find_node(nodes, text="Upload Short")
+        find_node(nodes, res_id="upload_bottom_button")
+        or find_node(nodes, text="Upload Short")
         or find_node(nodes, desc="Upload Short")
         or find_node(nodes, text="Upload")
         or find_node(nodes, res_id="upload_button")
     )
     if upload_btn and upload_btn["cx"]:
-        title_box = find_node(nodes, res_id="title_edit_text") or find_node(nodes, text="Caption your Short")
-        if title_box and title_box["cx"]:
-            log(f"[*] Entering Short title: '{title}'...")
-            run_adb(adb_exe, target, "shell", "input", "tap", str(title_box["cx"]), str(title_box["cy"]))
-            time.sleep(2)
-            # Type words with keyevent 62 (spacebar) for proper spaces
-            words = title.split(" ")
-            for i, word in enumerate(words):
-                if word:
-                    # Escape special shell characters if any
-                    safe_word = re.sub(r'([&|;$><`"\'\\])', r'\\\1', word)
-                    run_adb(adb_exe, target, "shell", "input", "text", safe_word)
-                if i < len(words) - 1:
-                    run_adb(adb_exe, target, "shell", "input", "keyevent", "62")
-            time.sleep(2)
-        
         log(f"[+] Tapping '{upload_btn.get('text') or 'Upload'}' button at ({upload_btn['cx']}, {upload_btn['cy']})...")
         run_adb(adb_exe, target, "shell", "input", "tap", str(upload_btn["cx"]), str(upload_btn["cy"]))
-        time.sleep(4)
+    else:
+        # Check if keyboard is still open (y=594) or closed (y=1120)
+        log("[*] Tapping 'Upload Short' at default coordinates (360, 1120)...")
+        run_adb(adb_exe, target, "shell", "input", "tap", "360", "1120")
+    time.sleep(4)
     
     log("\n[+] YouTube Short upload request submitted successfully!")
     log("[*] Video is now uploading and processing on channel.")
