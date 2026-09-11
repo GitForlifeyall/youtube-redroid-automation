@@ -296,23 +296,62 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
             log(f"[*] Adjusting audio starting timestamp ('{timestamp}')...")
             # Tap sound capsule in editor to open "Adjust sound" modal
             run_adb(adb_exe, target, "shell", "input", "tap", "360", "120")
-            time.sleep(1.5)
+            time.sleep(2)
             
-            total_duration_sec = 158.0 # default fallback estimate
+            # Read exact song duration from audio adjust modal
+            nodes = dump_ui_nodes(adb_exe, target)
+            dur_node = find_node(nodes, res_id="audio_duration_text")
+            seekbar_node = find_node(nodes, res_id="play_progress_bar")
+            
+            total_duration_sec = 158.0 # default fallback
+            if dur_node and dur_node["text"]:
+                try:
+                    total_duration_sec = parse_timestamp_seconds(dur_node["text"])
+                except Exception:
+                    pass
+            elif seekbar_node and seekbar_node["desc"]:
+                m = re.search(r"out of (?:(\d+) minutes? )?(?:(\d+) seconds?)?", seekbar_node["desc"])
+                if m:
+                    mins = int(m.group(1)) if m.group(1) else 0
+                    secs = int(m.group(2)) if m.group(2) else 0
+                    if mins or secs:
+                        total_duration_sec = float(mins * 60 + secs)
+            
             if str(timestamp).strip().lower() in ("random", "rand", "true"):
                 import random
-                target_sec = random.uniform(5.0, 60.0)
-                log(f"[+] Selected random timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s)")
+                max_start = max(5.0, total_duration_sec - 15.0)
+                target_sec = random.uniform(5.0, max_start)
+                log(f"[+] Selected random timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s / {total_duration_sec:.1f}s)")
             else:
                 target_sec = parse_timestamp_seconds(str(timestamp))
-                log(f"[+] Target audio timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s)")
+                log(f"[+] Target audio timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s / {total_duration_sec:.1f}s)")
             
-            # Calculate tap position on seekbar (x1=80, x2=640, cy=832)
-            ratio = min(0.95, max(0.0, target_sec / total_duration_sec))
-            tap_x = int(80 + ratio * 560)
+            # Seekbar usable track with thumb padding (x=96 to x=624, width=528)
+            track_left = 96
+            track_right = 624
+            usable_width = track_right - track_left
+            
+            ratio = min(1.0, max(0.0, target_sec / max(1.0, total_duration_sec)))
+            tap_x = int(track_left + ratio * usable_width)
             log(f"[*] Seeking to position on scrubber at ({tap_x}, 832)...")
             run_adb(adb_exe, target, "shell", "input", "tap", str(tap_x), "832")
-            time.sleep(0.8)
+            time.sleep(1)
+            
+            # Fine-tuning calibration check
+            nodes = dump_ui_nodes(adb_exe, target)
+            pos_node = find_node(nodes, res_id="play_position_text")
+            if pos_node and pos_node["text"]:
+                try:
+                    curr_sec = parse_timestamp_seconds(pos_node["text"])
+                    diff = target_sec - curr_sec
+                    if abs(diff) >= 1.0:
+                        adj_pixels = int(diff * (usable_width / max(1.0, total_duration_sec)))
+                        new_tap_x = max(track_left, min(track_right, tap_x + adj_pixels))
+                        log(f"[*] Fine-tuning seekbar ({pos_node['text']} -> target {int(target_sec//60)}:{int(target_sec%60):02d}) at ({new_tap_x}, 832)...")
+                        run_adb(adb_exe, target, "shell", "input", "tap", str(new_tap_x), "832")
+                        time.sleep(0.8)
+                except Exception:
+                    pass
             
             # Tap 'Done' button at (632, 1112)
             run_adb(adb_exe, target, "shell", "input", "tap", "632", "1112")
