@@ -204,7 +204,7 @@ def get_installed_youtube_package(adb_exe: str, target: str) -> str:
     return "app.morphe.android.youtube"
 
 
-def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: str):
+def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: str, sound: Optional[str] = None):
     log("\n========================================================")
     log("  AUTOMATING YOUTUBE SHORT UPLOAD")
     log("========================================================")
@@ -249,8 +249,72 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
     log("[*] Waiting for trimmer processing...")
     time.sleep(5)
     
-    # Step 4: Handle Shorts Editor Screen -> Tap 'Next'
+    # Step 4: Handle Shorts Editor Screen
     log("[*] Navigating Shorts editor...")
+    
+    # Check if sound selection was requested via -s / --sound flag
+    if sound:
+        log("[*] Sound flag detected: Selecting audio track from YouTube music library...")
+        nodes = dump_ui_nodes(adb_exe, target)
+        sound_btn = (
+            find_node(nodes, res_id="shorts_edit_sound_button")
+            or find_node(nodes, text="Add sound")
+            or find_node(nodes, desc="Add sound")
+            or find_node(nodes, text="Sound")
+        )
+        if sound_btn and sound_btn["cx"]:
+            log(f"[+] Tapping 'Add sound' button at ({sound_btn['cx']}, {sound_btn['cy']})...")
+            run_adb(adb_exe, target, "shell", "input", "tap", str(sound_btn["cx"]), str(sound_btn["cy"]))
+        else:
+            log("[*] Tapping 'Add sound' at default coordinates (360, 120)...")
+            run_adb(adb_exe, target, "shell", "input", "tap", "360", "120")
+        
+        # Wait for music picker library to load
+        time.sleep(4)
+        
+        # If a specific song query was passed as string (e.g. --sound "Sunflower")
+        if isinstance(sound, str) and sound.strip() and sound.strip().lower() not in ("true", "1"):
+            search_query = sound.strip()
+            log(f"[*] Searching for audio track '{search_query}'...")
+            nodes = dump_ui_nodes(adb_exe, target)
+            search_box = find_node(nodes, res_id="music_picker_search_box") or find_node(nodes, text="Search music")
+            if search_box and search_box["cx"]:
+                run_adb(adb_exe, target, "shell", "input", "tap", str(search_box["cx"]), str(search_box["cy"]))
+            else:
+                run_adb(adb_exe, target, "shell", "input", "tap", "360", "212")
+            time.sleep(2)
+            
+            # Type search query
+            words = search_query.split(" ")
+            for i, word in enumerate(words):
+                if word:
+                    safe_word = re.sub(r'([&|;$><`"\'\\])', r'\\\1', word)
+                    run_adb(adb_exe, target, "shell", "input", "text", safe_word)
+                if i < len(words) - 1:
+                    run_adb(adb_exe, target, "shell", "input", "keyevent", "62")
+            time.sleep(1)
+            run_adb(adb_exe, target, "shell", "input", "keyevent", "66")
+            time.sleep(4)
+        
+        # Tap the first track in the music picker
+        log("[*] Selecting track from music library...")
+        run_adb(adb_exe, target, "shell", "input", "tap", "300", "240")
+        time.sleep(2)
+        
+        # Tapping the blue checkmark/apply button: "Add this music to your video"
+        nodes = dump_ui_nodes(adb_exe, target)
+        add_music_btn = find_node(nodes, desc="Add this music to your video")
+        if add_music_btn and add_music_btn["cx"]:
+            log(f"[+] Attaching selected music at ({add_music_btn['cx']}, {add_music_btn['cy']})...")
+            run_adb(adb_exe, target, "shell", "input", "tap", str(add_music_btn["cx"]), str(add_music_btn["cy"]))
+        else:
+            log("[*] Attaching music at default apply coords (648, 240)...")
+            run_adb(adb_exe, target, "shell", "input", "tap", "648", "240")
+        
+        time.sleep(4)
+        log("[+] Sound successfully attached to Short!")
+    
+    # Tap editor 'Next' button
     nodes = dump_ui_nodes(adb_exe, target)
     next_edit_btn = (
         find_node(nodes, res_id="shorts_post_bottom_button")
@@ -381,6 +445,7 @@ def main():
     parser.add_argument("video_path", nargs="?", default=None, help="Path to the video file (.mp4)")
     parser.add_argument("-u", "--upload", nargs="?", const=True, default=None, help="Upload flag or path to video file")
     parser.add_argument("-v", "--view", action="store_true", help="Launch scrcpy to view the screen live")
+    parser.add_argument("-s", "--sound", nargs="?", const=True, default=None, help="Select audio from YouTube music library (optional song title query)")
     parser.add_argument("-a", "--account", default="01", help="Redroid account number (e.g. 01, 02). Default: 01")
     parser.add_argument("-t", "--title", default=None, help="Title for the YouTube Short")
     parser.add_argument("--adb", default=None, help="Custom path to adb executable")
@@ -415,6 +480,7 @@ def main():
     log(f"  REDROID YOUTUBE SHORT UPLOADER (Account {args.account})")
     log(f"  Video:  {video_file}")
     log(f"  Title:  {short_title}")
+    log(f"  Sound:  {args.sound if args.sound is not None else 'None'}")
     log(f"  Target: {target}")
     log("========================================================")
     
@@ -423,8 +489,8 @@ def main():
     if args.view:
         launch_scrcpy(scrcpy_exe, target)
     
-    # 1. Perform upload flow
-    upload_short_to_youtube(adb_exe, target, video_file, short_title)
+    # 1. Perform upload flow with sound selection if enabled
+    upload_short_to_youtube(adb_exe, target, video_file, short_title, sound=args.sound)
     
     # 2. Perform verification by checking 'You' -> 'Your videos' in YouTube App
     count = verify_channel_videos_count(adb_exe, target, min_expected=3)
