@@ -216,9 +216,16 @@ def parse_timestamp_seconds(ts_str: str) -> float:
     return float(ts_str)
 
 
+def input_fast_text(adb_exe: str, target: str, text: str):
+    """Enters text with spaces in one single ADB command using %s escaping."""
+    safe_text = text.replace(" ", "%s")
+    safe_text = re.sub(r'([&|;$><`"\'\\])', r'\\\1', safe_text)
+    run_adb(adb_exe, target, "shell", "input", "text", safe_text)
+
+
 def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: str, sound: Optional[str] = None, timestamp: Optional[str] = None):
     log("\n========================================================")
-    log("  AUTOMATING YOUTUBE SHORT UPLOAD")
+    log("  AUTOMATING YOUTUBE SHORT UPLOAD (FAST MODE)")
     log("========================================================")
     
     yt_pkg = get_installed_youtube_package(adb_exe, target)
@@ -229,7 +236,7 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
     # Step 2: Reset YouTube and launch direct video upload intent
     log(f"[*] Launching YouTube Short upload editor ({yt_pkg})...")
     run_adb(adb_exe, target, "shell", "am", "force-stop", yt_pkg)
-    time.sleep(2)
+    time.sleep(1.5)
     
     upload_cmd = [
         "am", "start",
@@ -240,26 +247,13 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
         "--eu", "android.intent.extra.STREAM", content_uri
     ]
     run_adb(adb_exe, target, "shell", *upload_cmd)
-    log("[*] Waiting for video trimmer to load...")
-    time.sleep(5)
+    log("[*] Video trimmer loading...")
+    time.sleep(3)
     
-    # Step 3: Handle Trimmer Screen -> Tap 'Next'
-    log("[*] Navigating video trimmer...")
-    nodes = dump_ui_nodes(adb_exe, target)
-    next_trim_btn = (
-        find_node(nodes, res_id="shorts_trim_finish_trim_button")
-        or find_node(nodes, desc="Continue to editor")
-        or find_node(nodes, text="Next")
-    )
-    if next_trim_btn and next_trim_btn["cx"]:
-        log(f"[+] Tapping trimmer 'Next' at ({next_trim_btn['cx']}, {next_trim_btn['cy']})...")
-        run_adb(adb_exe, target, "shell", "input", "tap", str(next_trim_btn["cx"]), str(next_trim_btn["cy"]))
-    else:
-        log("[*] Tapping trimmer 'Next' at default coordinates (627, 1112)...")
-        run_adb(adb_exe, target, "shell", "input", "tap", "627", "1112")
-    
-    log("[*] Waiting for trimmer processing...")
-    time.sleep(5)
+    # Step 3: Handle Trimmer Screen -> Tap 'Next' at (627, 1112)
+    log("[+] Tapping trimmer 'Next'...")
+    run_adb(adb_exe, target, "shell", "input", "tap", "627", "1112")
+    time.sleep(3)
     
     # Step 4: Handle Shorts Editor Screen
     log("[*] Navigating Shorts editor...")
@@ -267,210 +261,82 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
     # Check if sound selection was requested via -s / --sound flag
     if sound:
         log("[*] Sound flag detected: Selecting audio track from YouTube music library...")
-        nodes = dump_ui_nodes(adb_exe, target)
-        sound_btn = (
-            find_node(nodes, res_id="shorts_edit_sound_button")
-            or find_node(nodes, text="Add sound")
-            or find_node(nodes, desc="Add sound")
-            or find_node(nodes, text="Sound")
-        )
-        if sound_btn and sound_btn["cx"]:
-            log(f"[+] Tapping 'Add sound' button at ({sound_btn['cx']}, {sound_btn['cy']})...")
-            run_adb(adb_exe, target, "shell", "input", "tap", str(sound_btn["cx"]), str(sound_btn["cy"]))
-        else:
-            log("[*] Tapping 'Add sound' at default coordinates (360, 120)...")
-            run_adb(adb_exe, target, "shell", "input", "tap", "360", "120")
-        
-        # Wait for music picker library to load
-        time.sleep(4)
+        # Tap 'Add sound' button
+        run_adb(adb_exe, target, "shell", "input", "tap", "360", "120")
+        time.sleep(2)
         
         # If a specific song query was passed as string (e.g. --sound "Sunflower")
         if isinstance(sound, str) and sound.strip() and sound.strip().lower() not in ("true", "1"):
             search_query = sound.strip()
             log(f"[*] Searching for audio track '{search_query}'...")
-            nodes = dump_ui_nodes(adb_exe, target)
-            search_box = find_node(nodes, res_id="music_picker_search_box") or find_node(nodes, text="Search music")
-            if search_box and search_box["cx"]:
-                run_adb(adb_exe, target, "shell", "input", "tap", str(search_box["cx"]), str(search_box["cy"]))
-            else:
-                run_adb(adb_exe, target, "shell", "input", "tap", "360", "212")
-            time.sleep(2)
-            
-            # Type search query
-            words = search_query.split(" ")
-            for i, word in enumerate(words):
-                if word:
-                    safe_word = re.sub(r'([&|;$><`"\'\\])', r'\\\1', word)
-                    run_adb(adb_exe, target, "shell", "input", "text", safe_word)
-                if i < len(words) - 1:
-                    run_adb(adb_exe, target, "shell", "input", "keyevent", "62")
-            time.sleep(1)
+            run_adb(adb_exe, target, "shell", "input", "tap", "360", "212")
+            time.sleep(0.8)
+            input_fast_text(adb_exe, target, search_query)
             run_adb(adb_exe, target, "shell", "input", "keyevent", "66")
-            time.sleep(5)
+            time.sleep(2.5)
             
-            # Dismiss keyboard if open
-            run_adb(adb_exe, target, "shell", "input", "keyevent", "111")
-            time.sleep(1)
-        
-        # Tap the first track in the music picker list (at y=460)
-        log("[*] Selecting track from music library...")
-        nodes = dump_ui_nodes(adb_exe, target)
-        # Find first clickable item in the section list if available
-        first_track = find_node(nodes, desc="Play a preview") or find_node(nodes, desc="Shorts")
-        if first_track and first_track["cx"] and first_track["cy"] > 350:
-            log(f"[*] Tapping track '{first_track['desc'][:30]}...' at ({first_track['cx']}, {first_track['cy']})...")
-            run_adb(adb_exe, target, "shell", "input", "tap", str(first_track["cx"]), str(first_track["cy"]))
+            # Tap first search result track at (360, 470)
+            log("[*] Selecting search result track...")
+            run_adb(adb_exe, target, "shell", "input", "tap", "360", "470")
+            time.sleep(1.5)
         else:
+            # Tap first recommended track at (300, 460)
+            log("[*] Selecting top track from music library...")
             run_adb(adb_exe, target, "shell", "input", "tap", "300", "460")
-        time.sleep(3)
+            time.sleep(1.5)
         
-        # Tapping the blue checkmark/apply button: "Add this music to your video"
-        nodes = dump_ui_nodes(adb_exe, target)
-        add_music_btn = find_node(nodes, desc="Add this music to your video")
-        if add_music_btn and add_music_btn["cx"]:
-            log(f"[+] Attaching selected music at ({add_music_btn['cx']}, {add_music_btn['cy']})...")
-            run_adb(adb_exe, target, "shell", "input", "tap", str(add_music_btn["cx"]), str(add_music_btn["cy"]))
-        else:
-            log("[*] Attaching music at default apply coords (648, 460)...")
-            run_adb(adb_exe, target, "shell", "input", "tap", "648", "460")
-        
-        time.sleep(4)
+        # Tap 'Add this music to your video' button at (648, 460)
+        log("[+] Attaching selected music...")
+        run_adb(adb_exe, target, "shell", "input", "tap", "648", "460")
+        time.sleep(2)
         log("[+] Sound successfully attached to Short!")
         
         # Check if timestamp adjustment was requested via -t / --timestamp
         if timestamp:
             log(f"[*] Adjusting audio starting timestamp ('{timestamp}')...")
             # Tap sound capsule in editor to open "Adjust sound" modal
-            nodes = dump_ui_nodes(adb_exe, target)
-            sound_capsule = (
-                find_node(nodes, res_id="sound_button_title")
-                or find_node(nodes, res_id="shorts_edit_sound_button")
-                or find_node(nodes, desc="Sound")
-            )
-            if sound_capsule and sound_capsule["cx"]:
-                run_adb(adb_exe, target, "shell", "input", "tap", str(sound_capsule["cx"]), str(sound_capsule["cy"]))
-            else:
-                run_adb(adb_exe, target, "shell", "input", "tap", "360", "120")
+            run_adb(adb_exe, target, "shell", "input", "tap", "360", "120")
+            time.sleep(1.5)
             
-            time.sleep(3)
-            nodes = dump_ui_nodes(adb_exe, target)
-            
-            # Find seek bar and duration text
-            dur_node = find_node(nodes, res_id="audio_duration_text")
-            seekbar_node = find_node(nodes, res_id="play_progress_bar")
-            
-            total_duration_sec = 60.0 # fallback
-            if dur_node and dur_node["text"]:
-                try:
-                    total_duration_sec = parse_timestamp_seconds(dur_node["text"])
-                except Exception:
-                    pass
-            elif seekbar_node and seekbar_node["desc"]:
-                m = re.search(r"out of (?:(\d+) minutes? )?(?:(\d+) seconds?)?", seekbar_node["desc"])
-                if m:
-                    mins = int(m.group(1)) if m.group(1) else 0
-                    secs = int(m.group(2)) if m.group(2) else 0
-                    if mins or secs:
-                        total_duration_sec = float(mins * 60 + secs)
-            
-            # Determine target seconds
+            total_duration_sec = 158.0 # default fallback estimate
             if str(timestamp).strip().lower() in ("random", "rand", "true"):
                 import random
-                max_start = max(5.0, total_duration_sec - 15.0)
-                target_sec = random.uniform(5.0, max_start)
-                log(f"[+] Selected random timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s / {total_duration_sec:.1f}s)")
+                target_sec = random.uniform(5.0, 60.0)
+                log(f"[+] Selected random timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s)")
             else:
                 target_sec = parse_timestamp_seconds(str(timestamp))
-                log(f"[+] Target audio timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s / {total_duration_sec:.1f}s)")
+                log(f"[+] Target audio timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s)")
             
-            # Calculate tap position on seekbar
-            x1, x2, cy = 80, 640, 832
-            if seekbar_node and seekbar_node["bounds"]:
-                bx1, by1, bx2, by2 = seekbar_node["bounds"]
-                x1, x2 = bx1, bx2
-                cy = (by1 + by2) // 2
+            # Calculate tap position on seekbar (x1=80, x2=640, cy=832)
+            ratio = min(0.95, max(0.0, target_sec / total_duration_sec))
+            tap_x = int(80 + ratio * 560)
+            log(f"[*] Seeking to position on scrubber at ({tap_x}, 832)...")
+            run_adb(adb_exe, target, "shell", "input", "tap", str(tap_x), "832")
+            time.sleep(0.8)
             
-            ratio = min(0.95, max(0.0, target_sec / max(1.0, total_duration_sec)))
-            tap_x = int(x1 + ratio * (x2 - x1))
-            log(f"[*] Seeking to position on scrubber at ({tap_x}, {cy})...")
-            run_adb(adb_exe, target, "shell", "input", "tap", str(tap_x), str(cy))
-            time.sleep(2)
-            
-            # Tap 'Done' button to save and return to editor
-            nodes = dump_ui_nodes(adb_exe, target)
-            done_btn = find_node(nodes, res_id="overlay_dialog_fragment_done") or find_node(nodes, text="Done") or find_node(nodes, desc="Done")
-            if done_btn and done_btn["cx"]:
-                run_adb(adb_exe, target, "shell", "input", "tap", str(done_btn["cx"]), str(done_btn["cy"]))
-            else:
-                run_adb(adb_exe, target, "shell", "input", "tap", "632", "1112")
-            
-            time.sleep(3)
+            # Tap 'Done' button at (632, 1112)
+            run_adb(adb_exe, target, "shell", "input", "tap", "632", "1112")
+            time.sleep(1.5)
             log("[+] Audio timestamp adjusted and applied successfully!")
     
-    # Tap editor 'Next' button
-    nodes = dump_ui_nodes(adb_exe, target)
-    next_edit_btn = (
-        find_node(nodes, res_id="shorts_post_bottom_button")
-        or find_node(nodes, text="Next")
-    )
-    if next_edit_btn and next_edit_btn["cx"]:
-        log(f"[+] Tapping editor 'Next' at ({next_edit_btn['cx']}, {next_edit_btn['cy']})...")
-        run_adb(adb_exe, target, "shell", "input", "tap", str(next_edit_btn["cx"]), str(next_edit_btn["cy"]))
-    else:
-        log("[*] Tapping editor 'Next' at default coordinates (530, 1124)...")
-        run_adb(adb_exe, target, "shell", "input", "tap", "530", "1124")
-    
-    log("[*] Waiting for video render & upload transition...")
-    time.sleep(5)
+    # Tap editor 'Next' button at (530, 1124)
+    log("[+] Tapping editor 'Next'...")
+    run_adb(adb_exe, target, "shell", "input", "tap", "530", "1124")
+    time.sleep(3)
     
     # Step 5: Handle Metadata Screen
     log("[*] Navigating metadata screen...")
-    nodes = dump_ui_nodes(adb_exe, target)
-    title_box = (
-        find_node(nodes, res_id="title_edit_text")
-        or find_node(nodes, text="Caption your Short")
-        or find_node(nodes, res_id="caption_input")
-    )
-    if not title_box:
-        edit_texts = [n for n in nodes if n.get("class") == "android.widget.EditText"]
-        if edit_texts:
-            title_box = edit_texts[0]
-            
-    if title_box and title_box["cx"]:
-        log(f"[*] Entering Short title: '{title}'...")
-        run_adb(adb_exe, target, "shell", "input", "tap", str(title_box["cx"]), str(title_box["cy"]))
-        time.sleep(2)
-        # Type words with keyevent 62 (spacebar) for proper spaces
-        words = title.split(" ")
-        for i, word in enumerate(words):
-            if word:
-                # Escape special shell characters if any
-                safe_word = re.sub(r'([&|;$><`"\'\\])', r'\\\1', word)
-                run_adb(adb_exe, target, "shell", "input", "text", safe_word)
-            if i < len(words) - 1:
-                run_adb(adb_exe, target, "shell", "input", "keyevent", "62")
-        time.sleep(2)
-        # Close soft keyboard so screen returns to full height
-        run_adb(adb_exe, target, "shell", "input", "keyevent", "111")
-        time.sleep(2)
+    log(f"[*] Entering Short title: '{title}'...")
+    # Tap title box at (360, 400)
+    run_adb(adb_exe, target, "shell", "input", "tap", "360", "400")
+    time.sleep(0.8)
+    input_fast_text(adb_exe, target, title)
+    time.sleep(0.8)
     
-    # Re-dump nodes to get fresh, exact coordinates of Upload Short button
-    nodes = dump_ui_nodes(adb_exe, target)
-    upload_btn = (
-        find_node(nodes, res_id="upload_bottom_button")
-        or find_node(nodes, text="Upload Short")
-        or find_node(nodes, desc="Upload Short")
-        or find_node(nodes, text="Upload")
-        or find_node(nodes, res_id="upload_button")
-    )
-    if upload_btn and upload_btn["cx"]:
-        log(f"[+] Tapping '{upload_btn.get('text') or 'Upload'}' button at ({upload_btn['cx']}, {upload_btn['cy']})...")
-        run_adb(adb_exe, target, "shell", "input", "tap", str(upload_btn["cx"]), str(upload_btn["cy"]))
-    else:
-        # Check if keyboard is still open (y=594) or closed (y=1120)
-        log("[*] Tapping 'Upload Short' at default coordinates (360, 1120)...")
-        run_adb(adb_exe, target, "shell", "input", "tap", "360", "1120")
-    time.sleep(4)
+    # Tap 'Upload Short' button directly at (360, 594) (visible above keyboard)
+    log("[+] Tapping 'Upload Short' button...")
+    run_adb(adb_exe, target, "shell", "input", "tap", "360", "594")
+    time.sleep(2)
     
     log("\n[+] YouTube Short upload request submitted successfully!")
     log("[*] Video is now uploading and processing on channel.")
