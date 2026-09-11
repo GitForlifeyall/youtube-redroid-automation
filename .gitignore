@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large Media & Video files
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.apk
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# Upload & Downloads working directory contents (keep folder structure)
+upload files/*
+!upload files/.gitkeep
+downloads/*
+!downloads/.gitkeep
+
+# Environments & IDE
+.env
+.venv
+env/
+venv/
+ENV/
+.vscode/
+.idea/
+*.swp
+
+# Temporary screenshots & logs
+*.png
+*.jpg
+*.jpeg
+*.xml
+*.log
+.tempmediaStorage/
+.system_generated/

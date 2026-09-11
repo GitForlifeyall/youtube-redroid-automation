@@ -1,0 +1,3 @@
+[wsl2]
+kernel=C:\\Users\\Shahid\\wsl-kernel\\bzImage-v5
+vmIdleTimeout=-1
