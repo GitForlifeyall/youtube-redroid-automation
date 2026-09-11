@@ -326,32 +326,35 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
                 target_sec = parse_timestamp_seconds(str(timestamp))
                 log(f"[+] Target audio timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s / {total_duration_sec:.1f}s)")
             
-            # Seekbar usable track with thumb padding (x=96 to x=624, width=528)
+            # Stage 1: Coarse seek on seekbar (x=96 to x=624, width=528)
             track_left = 96
             track_right = 624
             usable_width = track_right - track_left
             
             ratio = min(1.0, max(0.0, target_sec / max(1.0, total_duration_sec)))
             tap_x = int(track_left + ratio * usable_width)
-            log(f"[*] Seeking to position on scrubber at ({tap_x}, 832)...")
+            log(f"[*] Coarse seek to position on scrubber at ({tap_x}, 832)...")
             run_adb(adb_exe, target, "shell", "input", "tap", str(tap_x), "832")
-            time.sleep(1)
+            time.sleep(1.2)
             
-            # Fine-tuning calibration check
-            nodes = dump_ui_nodes(adb_exe, target)
-            pos_node = find_node(nodes, res_id="play_position_text")
-            if pos_node and pos_node["text"]:
-                try:
-                    curr_sec = parse_timestamp_seconds(pos_node["text"])
-                    diff = target_sec - curr_sec
-                    if abs(diff) >= 1.0:
-                        adj_pixels = int(diff * (usable_width / max(1.0, total_duration_sec)))
-                        new_tap_x = max(track_left, min(track_right, tap_x + adj_pixels))
-                        log(f"[*] Fine-tuning seekbar ({pos_node['text']} -> target {int(target_sec//60)}:{int(target_sec%60):02d}) at ({new_tap_x}, 832)...")
-                        run_adb(adb_exe, target, "shell", "input", "tap", str(new_tap_x), "832")
-                        time.sleep(0.8)
-                except Exception:
-                    pass
+            # Stage 2: Precision continuous micro-adjustment on waveform (y=960, ~100px per second)
+            for step in range(5):
+                nodes = dump_ui_nodes(adb_exe, target)
+                pos_node = find_node(nodes, res_id="play_position_text")
+                curr_sec = parse_timestamp_seconds(pos_node["text"]) if pos_node and pos_node["text"] else target_sec
+                diff_sec = target_sec - curr_sec
+                
+                if abs(diff_sec) < 0.5:
+                    log(f"[+] Exact target timestamp reached: {pos_node['text']} ({curr_sec:.1f}s)!")
+                    break
+                
+                swipe_dx = int(diff_sec * 100)
+                swipe_dx = max(-350, min(350, swipe_dx))
+                start_x = 360
+                end_x = start_x - swipe_dx
+                log(f"[*] Micro-adjusting waveform ({pos_node.get('text', '')} -> target, diff {diff_sec:+.1f}s)...")
+                run_adb(adb_exe, target, "shell", "input", "swipe", str(start_x), "960", str(end_x), "960", "250")
+                time.sleep(1.0)
             
             # Tap 'Done' button at (632, 1112)
             run_adb(adb_exe, target, "shell", "input", "tap", "632", "1112")
