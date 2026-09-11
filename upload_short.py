@@ -322,21 +322,38 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
     # Tap editor 'Next' button at (530, 1124)
     log("[+] Tapping editor 'Next'...")
     run_adb(adb_exe, target, "shell", "input", "tap", "530", "1124")
-    time.sleep(3)
+    log("[*] Waiting for video render & metadata screen...")
+    time.sleep(4)
     
     # Step 5: Handle Metadata Screen
     log("[*] Navigating metadata screen...")
     log(f"[*] Entering Short title: '{title}'...")
     # Tap title box at (360, 400)
     run_adb(adb_exe, target, "shell", "input", "tap", "360", "400")
-    time.sleep(0.8)
+    time.sleep(1)
     input_fast_text(adb_exe, target, title)
-    time.sleep(0.8)
+    time.sleep(1)
     
-    # Tap 'Upload Short' button directly at (360, 594) (visible above keyboard)
-    log("[+] Tapping 'Upload Short' button...")
-    run_adb(adb_exe, target, "shell", "input", "tap", "360", "594")
-    time.sleep(2)
+    # Dismiss soft keyboard so the screen returns to clean full-height layout
+    run_adb(adb_exe, target, "shell", "input", "keyevent", "111")
+    time.sleep(1.5)
+    
+    # Dynamically find the exact 'Upload Short' button
+    nodes = dump_ui_nodes(adb_exe, target)
+    upload_btn = (
+        find_node(nodes, res_id="upload_bottom_button")
+        or find_node(nodes, text="Upload Short")
+        or find_node(nodes, desc="Upload Short")
+        or find_node(nodes, text="Upload")
+        or find_node(nodes, res_id="upload_button")
+    )
+    if upload_btn and upload_btn["cx"]:
+        log(f"[+] Tapping '{upload_btn.get('text') or 'Upload'}' button at ({upload_btn['cx']}, {upload_btn['cy']})...")
+        run_adb(adb_exe, target, "shell", "input", "tap", str(upload_btn["cx"]), str(upload_btn["cy"]))
+    else:
+        log("[*] Tapping 'Upload Short' at default coordinates (360, 1120)...")
+        run_adb(adb_exe, target, "shell", "input", "tap", "360", "1120")
+    time.sleep(3)
     
     log("\n[+] YouTube Short upload request submitted successfully!")
     log("[*] Video is now uploading and processing on channel.")
