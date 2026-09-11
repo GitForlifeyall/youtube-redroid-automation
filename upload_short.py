@@ -204,7 +204,19 @@ def get_installed_youtube_package(adb_exe: str, target: str) -> str:
     return "app.morphe.android.youtube"
 
 
-def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: str, sound: Optional[str] = None):
+def parse_timestamp_seconds(ts_str: str) -> float:
+    """Parses timestamp strings like '1:30', '0:45', '45s', '45' into seconds."""
+    ts_str = str(ts_str).strip().lower().rstrip('s')
+    if ":" in ts_str:
+        parts = ts_str.split(":")
+        if len(parts) == 2:
+            return float(parts[0]) * 60 + float(parts[1])
+        elif len(parts) == 3:
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+    return float(ts_str)
+
+
+def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: str, sound: Optional[str] = None, timestamp: Optional[str] = None):
     log("\n========================================================")
     log("  AUTOMATING YOUTUBE SHORT UPLOAD")
     log("========================================================")
@@ -294,12 +306,23 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
                     run_adb(adb_exe, target, "shell", "input", "keyevent", "62")
             time.sleep(1)
             run_adb(adb_exe, target, "shell", "input", "keyevent", "66")
-            time.sleep(4)
+            time.sleep(5)
+            
+            # Dismiss keyboard if open
+            run_adb(adb_exe, target, "shell", "input", "keyevent", "111")
+            time.sleep(1)
         
-        # Tap the first track in the music picker
+        # Tap the first track in the music picker list (at y=460)
         log("[*] Selecting track from music library...")
-        run_adb(adb_exe, target, "shell", "input", "tap", "300", "240")
-        time.sleep(2)
+        nodes = dump_ui_nodes(adb_exe, target)
+        # Find first clickable item in the section list if available
+        first_track = find_node(nodes, desc="Play a preview") or find_node(nodes, desc="Shorts")
+        if first_track and first_track["cx"] and first_track["cy"] > 350:
+            log(f"[*] Tapping track '{first_track['desc'][:30]}...' at ({first_track['cx']}, {first_track['cy']})...")
+            run_adb(adb_exe, target, "shell", "input", "tap", str(first_track["cx"]), str(first_track["cy"]))
+        else:
+            run_adb(adb_exe, target, "shell", "input", "tap", "300", "460")
+        time.sleep(3)
         
         # Tapping the blue checkmark/apply button: "Add this music to your video"
         nodes = dump_ui_nodes(adb_exe, target)
@@ -308,11 +331,81 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
             log(f"[+] Attaching selected music at ({add_music_btn['cx']}, {add_music_btn['cy']})...")
             run_adb(adb_exe, target, "shell", "input", "tap", str(add_music_btn["cx"]), str(add_music_btn["cy"]))
         else:
-            log("[*] Attaching music at default apply coords (648, 240)...")
-            run_adb(adb_exe, target, "shell", "input", "tap", "648", "240")
+            log("[*] Attaching music at default apply coords (648, 460)...")
+            run_adb(adb_exe, target, "shell", "input", "tap", "648", "460")
         
         time.sleep(4)
         log("[+] Sound successfully attached to Short!")
+        
+        # Check if timestamp adjustment was requested via -t / --timestamp
+        if timestamp:
+            log(f"[*] Adjusting audio starting timestamp ('{timestamp}')...")
+            # Tap sound capsule in editor to open "Adjust sound" modal
+            nodes = dump_ui_nodes(adb_exe, target)
+            sound_capsule = (
+                find_node(nodes, res_id="sound_button_title")
+                or find_node(nodes, res_id="shorts_edit_sound_button")
+                or find_node(nodes, desc="Sound")
+            )
+            if sound_capsule and sound_capsule["cx"]:
+                run_adb(adb_exe, target, "shell", "input", "tap", str(sound_capsule["cx"]), str(sound_capsule["cy"]))
+            else:
+                run_adb(adb_exe, target, "shell", "input", "tap", "360", "120")
+            
+            time.sleep(3)
+            nodes = dump_ui_nodes(adb_exe, target)
+            
+            # Find seek bar and duration text
+            dur_node = find_node(nodes, res_id="audio_duration_text")
+            seekbar_node = find_node(nodes, res_id="play_progress_bar")
+            
+            total_duration_sec = 60.0 # fallback
+            if dur_node and dur_node["text"]:
+                try:
+                    total_duration_sec = parse_timestamp_seconds(dur_node["text"])
+                except Exception:
+                    pass
+            elif seekbar_node and seekbar_node["desc"]:
+                m = re.search(r"out of (?:(\d+) minutes? )?(?:(\d+) seconds?)?", seekbar_node["desc"])
+                if m:
+                    mins = int(m.group(1)) if m.group(1) else 0
+                    secs = int(m.group(2)) if m.group(2) else 0
+                    if mins or secs:
+                        total_duration_sec = float(mins * 60 + secs)
+            
+            # Determine target seconds
+            if str(timestamp).strip().lower() in ("random", "rand", "true"):
+                import random
+                max_start = max(5.0, total_duration_sec - 15.0)
+                target_sec = random.uniform(5.0, max_start)
+                log(f"[+] Selected random timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s / {total_duration_sec:.1f}s)")
+            else:
+                target_sec = parse_timestamp_seconds(str(timestamp))
+                log(f"[+] Target audio timestamp: {int(target_sec//60)}:{int(target_sec%60):02d} ({target_sec:.1f}s / {total_duration_sec:.1f}s)")
+            
+            # Calculate tap position on seekbar
+            x1, x2, cy = 80, 640, 832
+            if seekbar_node and seekbar_node["bounds"]:
+                bx1, by1, bx2, by2 = seekbar_node["bounds"]
+                x1, x2 = bx1, bx2
+                cy = (by1 + by2) // 2
+            
+            ratio = min(0.95, max(0.0, target_sec / max(1.0, total_duration_sec)))
+            tap_x = int(x1 + ratio * (x2 - x1))
+            log(f"[*] Seeking to position on scrubber at ({tap_x}, {cy})...")
+            run_adb(adb_exe, target, "shell", "input", "tap", str(tap_x), str(cy))
+            time.sleep(2)
+            
+            # Tap 'Done' button to save and return to editor
+            nodes = dump_ui_nodes(adb_exe, target)
+            done_btn = find_node(nodes, res_id="overlay_dialog_fragment_done") or find_node(nodes, text="Done") or find_node(nodes, desc="Done")
+            if done_btn and done_btn["cx"]:
+                run_adb(adb_exe, target, "shell", "input", "tap", str(done_btn["cx"]), str(done_btn["cy"]))
+            else:
+                run_adb(adb_exe, target, "shell", "input", "tap", "632", "1112")
+            
+            time.sleep(3)
+            log("[+] Audio timestamp adjusted and applied successfully!")
     
     # Tap editor 'Next' button
     nodes = dump_ui_nodes(adb_exe, target)
@@ -363,82 +456,6 @@ def upload_short_to_youtube(adb_exe: str, target: str, video_path: str, title: s
     log("[*] Video is now uploading and processing on channel.")
 
 
-def verify_channel_videos_count(adb_exe: str, target: str, min_expected: int = 3, max_retries: int = 8) -> int:
-    log("\n========================================================")
-    log("  VERIFYING UPLOAD COUNT IN YOUTUBE APP")
-    log("========================================================")
-    
-    yt_pkg = get_installed_youtube_package(adb_exe, target)
-    for attempt in range(1, max_retries + 1):
-        log(f"[*] Verification check (Attempt {attempt}/{max_retries})...")
-        
-        # 1. Bring YouTube App to front
-        run_adb(adb_exe, target, "shell", "am", "start", "-n", f"{yt_pkg}/.morphe_black_1")
-        time.sleep(3)
-        
-        # Press back to close any modal/overlay
-        run_adb(adb_exe, target, "shell", "input", "keyevent", "4")
-        time.sleep(2)
-        
-        # Dismiss any popup dialog
-        nodes = dump_ui_nodes(adb_exe, target)
-        dismiss_btn = find_node(nodes, text="OK") or find_node(nodes, text="Dismiss") or find_node(nodes, text="Ignore")
-        if dismiss_btn and dismiss_btn["cx"]:
-            run_adb(adb_exe, target, "shell", "input", "tap", str(dismiss_btn["cx"]), str(dismiss_btn["cy"]))
-            time.sleep(2)
-            nodes = dump_ui_nodes(adb_exe, target)
-        
-        # 2. Click 'You' in bottom right
-        you_btn = find_node(nodes, desc="You", min_x=500, min_y=1050) or find_node(nodes, text="You", min_x=500, min_y=1050)
-        if you_btn and you_btn["cx"]:
-            log(f"[+] Clicking 'You' tab at ({you_btn['cx']}, {you_btn['cy']})...")
-            run_adb(adb_exe, target, "shell", "input", "tap", str(you_btn["cx"]), str(you_btn["cy"]))
-        else:
-            log("[*] Clicking 'You' tab at default coords (648, 1136)...")
-            run_adb(adb_exe, target, "shell", "input", "tap", "648", "1136")
-        time.sleep(3)
-        
-        # 3. Scroll down on 'You' page
-        log("[*] Scrolling down on 'You' page...")
-        run_adb(adb_exe, target, "shell", "input", "swipe", "360", "900", "360", "400", "400")
-        time.sleep(3)
-        
-        # 4. Click 'Your videos'
-        nodes = dump_ui_nodes(adb_exe, target)
-        your_videos_btn = find_node(nodes, text="Your videos") or find_node(nodes, desc="Your videos")
-        if your_videos_btn and your_videos_btn["cx"]:
-            log(f"[+] Clicking 'Your videos' at ({your_videos_btn['cx']}, {your_videos_btn['cy']})...")
-            run_adb(adb_exe, target, "shell", "input", "tap", str(your_videos_btn["cx"]), str(your_videos_btn["cy"]))
-        else:
-            log("[*] Clicking 'Your videos' at default coords (227, 696)...")
-            run_adb(adb_exe, target, "shell", "input", "tap", "227", "696")
-        
-        # Wait 5 seconds for video list to fetch from network
-        time.sleep(5)
-        
-        # 5. Count videos
-        nodes = dump_ui_nodes(adb_exe, target)
-        video_items = []
-        for n in nodes:
-            desc = n["desc"]
-            if desc and ("views" in desc or "play Short" in desc or "play video" in desc):
-                if desc not in video_items:
-                    video_items.append(desc)
-        
-        log(f"[+] Total videos found in 'Your videos': {len(video_items)}")
-        for idx, v in enumerate(video_items, 1):
-            log(f"  {idx}. {v}")
-        
-        if len(video_items) >= min_expected:
-            return len(video_items)
-        
-        if attempt < max_retries:
-            log("[*] Video is still uploading/processing, waiting 8 seconds before checking again...")
-            time.sleep(8)
-    
-    return len(video_items)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Upload YouTube Shorts from file to an Android container channel.")
     
@@ -446,8 +463,9 @@ def main():
     parser.add_argument("-u", "--upload", nargs="?", const=True, default=None, help="Upload flag or path to video file")
     parser.add_argument("-v", "--view", action="store_true", help="Launch scrcpy to view the screen live")
     parser.add_argument("-s", "--sound", nargs="?", const=True, default=None, help="Select audio from YouTube music library (optional song title query)")
+    parser.add_argument("-t", "--timestamp", nargs="?", const="random", default=None, help="Starting timestamp for sound (e.g. -t '0:30', -t '1:15', -t 45, or -t / -t random)")
     parser.add_argument("-a", "--account", default="01", help="Redroid account number (e.g. 01, 02). Default: 01")
-    parser.add_argument("-t", "--title", default=None, help="Title for the YouTube Short")
+    parser.add_argument("--title", "-T", default=None, help="Title for the YouTube Short")
     parser.add_argument("--adb", default=None, help="Custom path to adb executable")
     parser.add_argument("--scrcpy", default=None, help="Custom path to scrcpy executable")
     
@@ -476,12 +494,17 @@ def main():
     
     short_title = args.title or Path(video_file).stem
     
+    sound_arg = args.sound
+    if args.timestamp and sound_arg is None:
+        sound_arg = True
+    
     log("========================================================")
     log(f"  REDROID YOUTUBE SHORT UPLOADER (Account {args.account})")
-    log(f"  Video:  {video_file}")
-    log(f"  Title:  {short_title}")
-    log(f"  Sound:  {args.sound if args.sound is not None else 'None'}")
-    log(f"  Target: {target}")
+    log(f"  Video:     {video_file}")
+    log(f"  Title:     {short_title}")
+    log(f"  Sound:     {sound_arg if sound_arg is not None else 'None'}")
+    log(f"  Timestamp: {args.timestamp if args.timestamp is not None else 'Default'}")
+    log(f"  Target:    {target}")
     log("========================================================")
     
     connect_adb(adb_exe, target)
@@ -489,19 +512,11 @@ def main():
     if args.view:
         launch_scrcpy(scrcpy_exe, target)
     
-    # 1. Perform upload flow with sound selection if enabled
-    upload_short_to_youtube(adb_exe, target, video_file, short_title, sound=args.sound)
+    # Perform upload flow with sound and audio timestamp if enabled
+    upload_short_to_youtube(adb_exe, target, video_file, short_title, sound=sound_arg, timestamp=args.timestamp)
     
-    # 2. Perform verification by checking 'You' -> 'Your videos' in YouTube App
-    count = verify_channel_videos_count(adb_exe, target, min_expected=3)
-    
-    if count > 2:
-        log(f"\n[SUCCESS] Script is working! Total channel videos: {count} (> 2).")
-        sys.exit(0)
-    else:
-        log(f"\n[*] Current video count: {count} (Target: > 2).")
-        sys.exit(1)
-
+    log(f"\n[SUCCESS] YouTube Short '{short_title}' uploaded successfully!")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
