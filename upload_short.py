@@ -3,17 +3,19 @@ YouTube Short Uploader for Redroid Android Instances
 =====================================================
 Automates pushing and uploading YouTube Shorts directly from local video files
 to the logged-in YouTube channel on a Redroid Android instance.
-Verifies channel upload count via YouTube App navigation (You -> Your videos).
+Supports sound selection, precise audio scrubber timestamp seeking, and multi-account containers.
 
 Usage:
     python upload_short.py -u <video_path> [-v] [--account 01] [--title "Short Title"]
-    python upload_short.py <video_path> -u -v
+    python upload_short.py <video_path> -u -v -s "Song Name" -t "0:45"
 
 Flags:
-    -u, --upload <PATH>   Path to the video file to upload (or standalone flag if path given positionally)
-    -v, --view            Launch scrcpy to view the Android screen in real-time
-    -a, --account <NUM>   Redroid instance/account number (default: 01 -> port 5801)
-    -t, --title <TEXT>    Title for the YouTube Short (default: filename)
+    -u, --upload <PATH>      Path to the video file to upload (or standalone flag if path given positionally)
+    -v, --view               Launch scrcpy to view the Android screen in real-time
+    -a, --account <NUM>      Redroid instance/account number (default: 01 -> port 5801)
+    -t, --timestamp <TIME>   Starting timestamp for sound (e.g. '0:30', '1:15', 45, or 'random')
+    -s, --sound <TEXT>       Audio track name to search and attach from YouTube music library (optional query)
+    -T, --title <TEXT>       Title for the YouTube Short (default: video filename)
 """
 
 import argparse
@@ -24,6 +26,7 @@ import subprocess
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Optional, Union, List, Dict, Tuple
 
 
 DEFAULT_TOOLS_DIR = Path(r"C:\Users\Shahid\tools\scrcpy")

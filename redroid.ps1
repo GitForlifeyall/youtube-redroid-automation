@@ -53,26 +53,21 @@ $AdbTarget = "127.0.0.1:$HostPort"
 
 function Ensure-WslAndDocker {
     # Keep WSL2 VM alive in the background on Windows
-    $wslProcs = Get-Process wsl -ErrorAction SilentlyContinue
-    if (-not $wslProcs) {
-        Start-Process -FilePath "wsl.exe" -ArgumentList "-d", "Ubuntu", "-u", "root", "-e", "sleep", "infinity" -WindowStyle Hidden
+    $wslKeeper = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*wsl*" -and $_.CommandLine -like "*Ubuntu*" -and $_.CommandLine -like "*sleep*" }
+    if (-not $wslKeeper) {
+        Start-Process -FilePath "wsl.exe" -ArgumentList "-d", "Ubuntu", "-u", "root", "--exec", "/bin/sleep", "infinity" -WindowStyle Hidden
         Start-Sleep -Milliseconds 500
     }
 
     # Check if WSL is responsive
-    $wslCheck = wsl -d Ubuntu -u root -e bash -c "echo WSL_OK" 2>$null
+    $wslCheck = ((wsl -d Ubuntu -u root -e bash -c "echo WSL_OK" 2>$null) -join "").Trim()
     if ($wslCheck -ne "WSL_OK") {
         Write-Host "[*] Starting WSL2 Ubuntu..." -ForegroundColor Cyan
         wsl -d Ubuntu -u root -e true | Out-Null
     }
 
-    # Ensure Docker service is running
-    $dockerActive = (wsl -d Ubuntu -u root -e systemctl is-active docker 2>$null).Trim()
-    if ($dockerActive -ne "active") {
-        Write-Host "[*] Starting Docker service inside WSL..." -ForegroundColor Cyan
-        wsl -d Ubuntu -u root -e systemctl start docker | Out-Null
-        Start-Sleep -Seconds 2
-    }
+    # Ensure systemd linger and Docker service
+    wsl -d Ubuntu -u root -e bash -c "loginctl enable-linger root 2>/dev/null; systemctl is-active docker >/dev/null || systemctl start docker" | Out-Null
 }
 
 function Connect-Adb {
@@ -136,7 +131,7 @@ switch ($Action.ToLower()) {
             wsl -d Ubuntu -u root -e docker start $ContainerName | Out-Null
         }
 
-        Connect-Adb -MaxAttempts 15
+        Connect-Adb -MaxAttempts 30 | Out-Null
 
         # Disable crashing mock bluetooth HAL in guest container
         wsl -d Ubuntu -u root -e bash -c "docker exec $ContainerName stop vendor.bluetooth-1-1 2>/dev/null; docker exec $ContainerName pm disable com.android.bluetooth 2>/dev/null" | Out-Null
@@ -177,19 +172,19 @@ switch ($Action.ToLower()) {
 
         Ensure-WslAndDocker
 
-        $containerInfo = wsl -d Ubuntu -u root -e docker ps -a -f "name=^/${ContainerName}$" --format "{{.Status}}"
+        $containerInfo = (wsl -d Ubuntu -u root -e docker ps -a -f "name=^/${ContainerName}$" --format "{{.Status}}" 2>$null) -join ""
         if ([string]::IsNullOrWhiteSpace($containerInfo)) {
             Write-Host "Container State: NOT CREATED" -ForegroundColor DarkGray
             return
         }
 
         Write-Host "Container State: $containerInfo"
-        if ($containerInfo -like "Up*") {
+        if ($containerInfo -like "*Up*") {
             & $AdbExe connect $AdbTarget 2>$null | Out-Null
-            $androidVer = (& $AdbExe -s $AdbTarget shell getprop ro.build.version.release 2>$null)
-            $screenSize = (& $AdbExe -s $AdbTarget shell wm size 2>$null)
-            $screenDensity = (& $AdbExe -s $AdbTarget shell wm density 2>$null)
-            $bootComplete = (& $AdbExe -s $AdbTarget shell getprop sys.boot_completed 2>$null)
+            $androidVer = ((& $AdbExe -s $AdbTarget shell getprop ro.build.version.release 2>$null) -join "").Trim()
+            $screenSize = ((& $AdbExe -s $AdbTarget shell wm size 2>$null) -join " ").Trim()
+            $screenDensity = ((& $AdbExe -s $AdbTarget shell wm density 2>$null) -join " ").Trim()
+            $bootComplete = ((& $AdbExe -s $AdbTarget shell getprop sys.boot_completed 2>$null) -join "").Trim()
 
             Write-Host "Android Version: $androidVer"
             Write-Host "Boot Completed:  $bootComplete"
@@ -207,11 +202,10 @@ switch ($Action.ToLower()) {
         if ($isRunning -ne "true") {
             Write-Host "[*] Container $ContainerName is not running. Starting it now..." -ForegroundColor Cyan
             & $MyInvocation.MyCommand.Path "start" $Account
-        } else {
-            Connect-Adb -MaxAttempts 10 | Out-Null
         }
+        Connect-Adb -MaxAttempts 20 | Out-Null
         Write-Host "[*] Launching scrcpy visual interface for Account $Account..." -ForegroundColor Green
-        & $ScrcpyExe -s $AdbTarget --video-codec=h264 --video-encoder=OMX.google.h264.encoder --video-bit-rate=4M --force-adb-forward --no-audio --max-fps=30 --window-title "Redroid Account $Account ($AdbTarget)"
+        & $ScrcpyExe -s $AdbTarget --video-codec=h264 --video-bit-rate=4M --max-fps=30 --no-audio --stay-awake --window-title "Redroid Account $Account ($AdbTarget)"
     }
 
     "adb" {

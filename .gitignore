@@ -39,5 +39,8 @@ ENV/
 *.jpeg
 *.xml
 *.log
+debug/
 .tempmediaStorage/
 .system_generated/
+docker_export/*.tar.gz
+
