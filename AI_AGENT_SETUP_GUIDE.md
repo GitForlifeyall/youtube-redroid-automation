@@ -2,6 +2,8 @@
 
 > **Target Audience**: Autonomous AI Coding Agents (Antigravity, Claude Code, Devin, Cursor Agent, etc.) and Developers.
 > **Repository Purpose**: Automated YouTube Shorts and Instagram Reels video publishing pipelines utilizing containerized Android (Redroid) running on WSL2 / Linux.
+> **GitHub Repository**: [https://github.com/GitForlifeyall/youtube-redroid-automation](https://github.com/GitForlifeyall/youtube-redroid-automation)
+> **Clone Command**: `git clone https://github.com/GitForlifeyall/youtube-redroid-automation.git`
 
 ---
 
